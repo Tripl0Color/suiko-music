@@ -1,0 +1,7 @@
+python-telegram-bot>=21.0
+ytmusicapi>=1.8.0
+aiohttp
+python-dotenv
+apscheduler>=3.10,<4
+browser_cookie3
+yt-dlp
