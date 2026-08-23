@@ -1,0 +1,29 @@
+# Секреты
+.env
+oauth.json
+
+# База данных (создаётся автоматически)
+songs.db
+songs.db-journal
+
+# Куки (создаются автоматически)
+yt_dlp_cookies.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Сборка
+dist/
+build/
+*.spec
+
+# Логи
+*.log
+
+# Системные
+Thumbs.db
+.DS_Store
