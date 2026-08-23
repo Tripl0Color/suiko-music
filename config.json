@@ -1,0 +1,15 @@
+{
+    "_comment": "YT Music Bot — Настройки",
+    "_help": "Отредактируй этот файл перед первым запуском. Все пути относительные.",
+
+    "telegram_bot_token": "",
+    "allowed_user_ids": [],
+
+    "browser": "edge",
+    "_browser_options": "edge | chrome",
+
+    "check_interval_minutes": 15,
+
+    "db_path": "songs.db",
+    "browser_file": "browser.json"
+}

@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import Any
 
 from telegram import Bot, MessageOriginChannel, Update
@@ -52,48 +53,59 @@ def is_allowed(user_id: int) -> bool:
     return user_id in ALLOWED_USER_IDS
 
 
-HELP_TEXT = """🎵 <b>Music Channel Bot</b>
+HELP_TEXT = """🎶 <b>YouTube Music → Telegram Bot</b>
+<i>Автоматически пересылает лайкнутые треки в канал</i>
 
-Команды:
-/start — Начать настройку
-/status — Текущий статус
-/auth — Инструкция по авторизации YouTube Music
-/export — Автоизвлечение cookies из браузера
-/check — Проверить лайкнутые сейчас
-/pause — Приостановить автопроверку
-/resume — Возобновить автопроверку
-/help — Показать эту справку
+┌──────────────── <b>Управление</b> ────────────────┐
+│                                                     │
+│  📋 <b>Основные</b>                                  │
+│  /start — Запуск и настройка                        │
+│  /status — Статус бота                              │
+│  /help — Эта справка                                │
+│                                                     │
+│  🎵 <b>Музыка</b>                                   │
+│  /check — Проверить лайкнутые сейчас                │
+│  /scan — Отметить треки как опубликованные          │
+│  /history — Последние опубликованные треки           │
+│  /clear_history — Очистить историю                  │
+│                                                     │
+│  🔐 <b>Авторизация</b>                               │
+│  /auth — Инструкция по авторизации                   │
+│  /export — Автоизвлечение cookies                    │
+│  /refresh — Обновить cookies из браузера             │
+│                                                     │
+│  ⚙️ <b>Настройка</b>                                │
+│  /channel — Указать канал                           │
+│  /pause — Приостановить автопроверку                 │
+│  /resume — Возобновить автопроверку                  │
+│                                                     │
+└─────────────────────────────────────────────────────┘
 """
 
 
 AUTH_INSTRUCTIONS = """🔐 <b>Авторизация YouTube Music</b>
 
-⚠ OAuth сломан на стороне YouTube (с сент. 2025).
-Используем <b>browser-based auth</b> — куки из браузера.
+Бот использует браузер Edge для доступа к YouTube Music.
+Авторизация работает автоматически — Edge открывается при запуске.
 
-<b>Способ 1: Автоматически</b>
-Просто напиши <code>/export</code> — извлеку cookies из Chrome/Edge.
-⚠ На Windows нужен запуск от администратора.
+┌─────────── <b>Если бот не находит треки</b> ───────────┐
+│                                                      │
+│  1. Убедись что Edge открыт с YouTube Music          │
+│  2. Проверь что залогинен нужным аккаунтом            │
+│  3. Напиши /check для ручной проверки               │
+│                                                      │
+└──────────────────────────────────────────────────────┘
 
-<b>Способ 2: Netscape Cookie File</b>
-Отправь файл <code>cookies.txt</code> (формат из yt-dlp, CurlExporter и т.д.)
-<b>Или</b> вставь содержимое как сообщение.
+<b>Ручная авторизация (если Edge не помогает):</b>
 
-<b>Способ 3: DevTools</b>
-1. Открой <a href="https://music.youtube.com">music.youtube.com</a>
-2. F12 → вкладка <b>Network</b>
-3. Найди запрос к music.youtube.com
-4. ПКМ → <b>Copy → Copy as cURL</b>
-5. Вставь мне как сообщение
+🔹 <b>Вставь куки прямо в чат</b>
+Скопируй cookies из браузера (F12 → Application → Cookies)
+и вставь как сообщение.
 
-<b>Способ 4: JSON</b>
-Отправь:
-<code>{"cookie": "...", "authorization": "SAPISIDHASH ...", "x-goog-authuser": "0"}</code>
+🔹 <b>Загрузи файл</b>
+Отправь <code>browser.json</code> или <code>cookies.txt</code> боту.
 
-<b>Способ 5: Файл</b>
-Загрузи <code>browser.json</code> (созданный через ytmusicapi)
-
-⏰ Cookies истекают через 2-4 недели — потом /auth заново.
+⏰ Cookies истекают через 2-4 недели.
 """
 
 
@@ -118,24 +130,38 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     if yt_service.is_authorized and channel:
         await update.message.reply_text(
-            f"✅ Бот активен!\n\n"
-            f"📺 Канал: {channel}\n"
-            f"🔄 Автопроверка: каждые {CHECK_INTERVAL_MINUTES} мин.\n\n"
-            f"Команды:\n"
-            f"/check — проверить сейчас\n"
-            f"/pause — приостановить\n"
-            f"/status — подробный статус"
+            "🎶 <b>YouTube Music Bot</b>\n"
+            "<i>Работаю и слушаю твои лайки!</i>\n\n"
+            "┌────────────────────────────────┐\n"
+            f"│  📺 Канал: <b>{channel}</b>\n"
+            f"│  🔄 Автопроверка: каждые {CHECK_INTERVAL_MINUTES} мин.\n"
+            "│  🌐 Браузер: Edge (CDP)\n"
+            "└────────────────────────────────┘\n\n"
+            "📋 <b>Быстрые команды:</b>\n"
+            "  /check — проверить сейчас\n"
+            "  /status — подробный статус\n"
+            "  /pause — приостановить\n"
+            "  /help — все команды",
+            parse_mode="HTML",
         )
         return
 
-    lines = ["🎵 Привет! Я пересылаю лайкнутые песни из YouTube Music в канал.\n"]
-    if not yt_service.is_authorized:
-        lines.append("Шаг 1: Напиши /auth чтобы получить инструкцию по авторизации.")
-    else:
-        lines.append("✅ YouTube Music уже авторизован.")
-    if not channel:
-        lines.append("Шаг 2: Напиши /channel чтобы указать канал.")
-    await update.message.reply_text("\n".join(lines))
+    await update.message.reply_text(
+        "🎶 <b>YouTube Music → Telegram Bot</b>\n"
+        "<i>Автоматически пересылает лайкнутые треки в канал</i>\n\n"
+        "┌────────────────────────────────┐\n"
+        "│  <b>Первый запуск</b>               │\n"
+        "│                                │\n"
+        f"│  {'' if yt_service.is_authorized else '1️⃣ '}/auth — авторизация\n"
+        f"│  {'' if channel else '2️⃣ '}/channel — выбрать канал\n"
+        "│                                │\n"
+        "│  После настройки бот будет\n"
+        "│  автоматически проверять\n"
+        "│  лайкнутые треки каждые\n"
+        f"│  {CHECK_INTERVAL_MINUTES} минут! 🎉               │\n"
+        "└────────────────────────────────┘",
+        parse_mode="HTML",
+    )
 
 
 # ╔══════════════════════════════════════════════════════════════════╗
@@ -158,12 +184,17 @@ async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         user.id, yt_service.is_authorized, channel, len(posted_ids),
     )
 
+    yt_icon = "🟢" if yt_service.is_authorized else "🔴"
+    ch_icon = "🟢" if channel else "🔴"
     await update.message.reply_text(
-        f"📊 Статус бота\n\n"
-        f"🎵 YouTube Music: {yt_status}\n"
-        f"📺 Канал: {ch_status}\n"
-        f"🎵 Опубликовано треков: {len(posted_ids)}\n"
-        f"🔄 Автопроверка: каждые {CHECK_INTERVAL_MINUTES} мин."
+        "📊 <b>Статус бота</b>\n\n"
+        "┌────────────────────────────────┐\n"
+        f"│  {yt_icon} YouTube Music: {yt_status}\n"
+        f"│  {ch_icon} Канал: {ch_status}\n"
+        f"│  🎵 Опубликовано: <b>{len(posted_ids)}</b> треков\n"
+        f"│  🔄 Автопроверка: каждые {CHECK_INTERVAL_MINUTES} мин.\n"
+        "└────────────────────────────────┘",
+        parse_mode="HTML",
     )
 
 
@@ -277,17 +308,33 @@ async def cmd_check(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
     if not yt_service.is_authorized or not channel:
-        await update.message.reply_text("⚠ Бот не настроен. Используй /start")
+        await update.message.reply_text(
+            "⚠️ <b>Бот не настроен</b>\n\n"
+            "Напиши /start для настройки.",
+            parse_mode="HTML",
+        )
         return
 
-    await update.message.reply_text("🔍 Проверяю лайкнутые песни…")
+    await update.message.reply_text(
+        "🔍 <b>Проверяю лайкнутые песни…</b>\n"
+        "<i>Скачиваю и отправляю треки в канал</i>",
+        parse_mode="HTML",
+    )
     count = await check_and_post(ctx.bot, user.id, channel)
     logger.info("[CHECK] user=%s posted_count=%d", user.id, count)
 
     if count == 0:
-        await update.message.reply_text("🎵 Новых лайкнутых песен нет.")
+        await update.message.reply_text(
+            "🎵 <b>Новых лайкнутых песен нет</b>\n"
+            "<i>Все треки уже опубликованы или лайки не обновлены</i>",
+            parse_mode="HTML",
+        )
     else:
-        await update.message.reply_text(f"✅ Опубликовано {count} новых песен!")
+        await update.message.reply_text(
+            f"✅ <b>Опубликовано {count} новых песен!</b>\n"
+            f"<i>Треки уже в канале 🎉</i>",
+            parse_mode="HTML",
+        )
 
 
 # ╔══════════════════════════════════════════════════════════════════╗
@@ -302,16 +349,21 @@ async def cmd_channel(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     if not yt_service.is_authorized:
-        await update.message.reply_text("⚠ Сначала авторизуй YouTube Music: /auth")
+        await update.message.reply_text(
+            "⚠️ <b>Сначала авторизуй YouTube Music</b>\n"
+            "Напиши /auth",
+            parse_mode="HTML",
+        )
         return
 
     await update.message.reply_text(
-        "📡 Укажи канал для постинга.\n\n"
-        "Отправь одно из:\n"
-        "• @username канала (например @my_music)\n"
-        "• Числовой ID (например -1001234567890)\n"
-        "• Пересланное сообщение из канала\n\n"
-        "💡 Бот должен быть администратором канала с правом публикации!"
+        "📡 <b>Настройка канала</b>\n\n"
+        "Отправь одно из:\n\n"
+        "🔹 <code>@username</code> канала (напр. @my_music)\n"
+        "🔹 Числовой ID (напр. -1001234567890)\n"
+        "🔹 Пересланное сообщение из канала\n\n"
+        "💡 <i>Бот должен быть администратором канала</i>",
+        parse_mode="HTML",
     )
 
 
@@ -327,7 +379,12 @@ async def cmd_pause(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         return
     logger.info("[PAUSE] user=%s", user.id)
     await db.set_active(user.id, False)
-    await update.message.reply_text("⏸ Автопроверка приостановлена.\nВозобновить: /resume")
+    await update.message.reply_text(
+        "⏸ <b>Автопроверка приостановлена</b>\n\n"
+        "Треки больше не будут поститься.\n"
+        "Возобновить: /resume",
+        parse_mode="HTML",
+    )
 
 
 async def cmd_resume(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -338,7 +395,79 @@ async def cmd_resume(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info("[RESUME] user=%s", user.id)
     await db.set_active(user.id, True)
     await update.message.reply_text(
-        f"▶️ Автопроверка возобновлена (каждые {CHECK_INTERVAL_MINUTES} мин)."
+        f"▶️ <b>Автопроверка возобновлена</b>\n\n"
+        f"Каждые {CHECK_INTERVAL_MINUTES} минут бот будет проверять\n"
+        "лайкнутые треки и постить новые.",
+        parse_mode="HTML",
+    )
+
+
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  /oauth — Google OAuth device flow                              ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+
+async def cmd_oauth(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Start OAuth device flow for YouTube Music."""
+    _log_update(update)
+    user = update.effective_user
+    if not user or not is_allowed(user.id):
+        return
+
+    # Check if user is confirming the OAuth flow
+    text = update.message.text.strip() if update.message and update.message.text else ""
+    parts = text.split(None, 1)
+
+    if ctx.user_data.get("oauth_pending"):
+        # User is confirming — finish OAuth
+        ctx.user_data.pop("oauth_pending", None)
+        device_code = ctx.user_data.pop("oauth_device_code", None)
+        if not device_code:
+            await update.message.reply_text("❌ Ошибка: device code потерян. Попробуй /oauth заново.")
+            return
+
+        await update.message.reply_text("🔄 Завершаю авторизацию…")
+        ok = await asyncio.to_thread(yt_service.oauth_finish, device_code)
+        if ok:
+            try:
+                tracks = await asyncio.to_thread(yt_service.get_liked_songs, 1)
+                await update.message.reply_text(
+                    f"✅ OAuth авторизация успешна!\n"
+                    f"Найдено {len(tracks)} лайкнутых треков.\n\n"
+                    f"Теперь укажи канал: /channel"
+                )
+            except Exception as e:
+                await update.message.reply_text(
+                    f"⚠ OAuth токен сохранён, но ошибка:\n<code>{e}</code>",
+                    parse_mode="HTML",
+                )
+        else:
+            await update.message.reply_text(
+                "❌ Не удалось завершить OAuth.\n"
+                "Убедись что ты подтвердил на странице. Попробуй /oauth заново."
+            )
+        return
+
+    # Start new OAuth flow
+    await update.message.reply_text("🔄 Получаю код авторизации…")
+    result = await asyncio.to_thread(yt_service.oauth_start)
+    if not result:
+        await update.message.reply_text(
+            "❌ Не удалось начать OAuth.\n"
+            "Возможно, проблема с сетью. Попробуй позже."
+        )
+        return
+
+    ctx.user_data["oauth_pending"] = True
+    ctx.user_data["oauth_device_code"] = result["device_code"]
+
+    await update.message.reply_text(
+        f"🔐 <b>Google OAuth авторизация</b>\n\n"
+        f"1. Открой ссылку:\n{result['url']}\n\n"
+        f"2. Войди в Google и подтверди доступ\n\n"
+        f"3. После подтверждения напиши <code>/oauth</code> ещё раз\n\n"
+        f"Код: <code>{result['user_code']}</code>",
+        parse_mode="HTML",
     )
 
 
@@ -350,6 +479,194 @@ async def cmd_resume(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     _log_update(update)
     await update.message.reply_text(HELP_TEXT, parse_mode="HTML")
+
+
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  /scan — mark video IDs as already posted                       ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+# Regex to extract YouTube video IDs from various URL formats
+_YT_URL_RE = re.compile(r"(?:music\.)?youtube\.com/watch\?v=([A-Za-z0-9_-]{11})")
+_YT_SHORT_RE = re.compile(r"youtu\.be/([A-Za-z0-9_-]{11})")
+_YT_ID_RE = re.compile(r"\b([A-Za-z0-9_-]{11})\b")
+
+
+async def cmd_scan(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Mark video IDs as already posted so the bot won't re-post them.
+
+    Usage:
+      /scan — mark all liked songs as posted (skip current queue)
+      /scan dQw4w9WgXcQ — mark one video ID
+      /scan https://music.youtube.com/watch?v=dQw4w9WgXcQ — mark from URL
+      /scan id1 id2 id3 — mark multiple IDs
+    """
+    _log_update(update)
+    user = update.effective_user
+    if not user or not is_allowed(user.id):
+        return
+
+    # Parse arguments after /scan
+    text = update.message.text.strip() if update.message and update.message.text else ""
+    parts = text.split(None, 1)  # split /scan from the rest
+    arg = parts[1].strip() if len(parts) > 1 else ""
+
+    if arg:
+        # Extract video IDs from the argument
+        found_ids: set[str] = set()
+
+        # Try URL patterns first
+        for regex in (_YT_URL_RE, _YT_SHORT_RE):
+            for match in regex.finditer(arg):
+                found_ids.add(match.group(1))
+
+        # If no URL found, try to extract bare video IDs (11-char strings)
+        if not found_ids:
+            # Split by whitespace/newlines and filter 11-char IDs
+            for token in re.split(r"[\s,;]+", arg):
+                token = token.strip()
+                if len(token) == 11 and _YT_ID_RE.fullmatch(token):
+                    found_ids.add(token)
+
+        if not found_ids:
+            await update.message.reply_text(
+                "❌ Не удалось извлечь video ID.\n\n"
+                "Форматы:\n"
+                "• <code>/scan dQw4w9WgXcQ</code>\n"
+                "• <code>/scan https://music.youtube.com/watch?v=dQw4w9WgXcQ</code>\n"
+                "• <code>/scan id1 id2 id3</code>",
+                parse_mode="HTML",
+            )
+            return
+
+        added = await db.mark_video_ids(list(found_ids))
+        total = await db.get_posted_count()
+        logger.info(
+            "[SCAN] user=%s manually marked %d IDs, added=%d, total=%d",
+            user.id, len(found_ids), added, total,
+        )
+        await update.message.reply_text(
+            f"✅ Отмечено {len(found_ids)} video ID как уже опубликованных.\n"
+            f"➕ Добавлено: {added} | 📊 Всего в базе: {total}\n\n"
+            f"Эти треки больше не будут поститься."
+        )
+    else:
+        # No argument: mark all current liked songs as posted
+        if not yt_service.is_authorized:
+            await update.message.reply_text("⚠ Бот не авторизован. Используй /auth")
+            return
+
+        await update.message.reply_text("🔍 Получаю список лайкнутых треков…")
+        try:
+            tracks = await asyncio.to_thread(yt_service.get_liked_songs, 200)
+        except Exception as e:
+            logger.exception("[SCAN] user=%s failed to fetch liked songs", user.id)
+            await update.message.reply_text(f"❌ Ошибка: {e}")
+            return
+
+        video_ids = [t["video_id"] for t in tracks]
+        added = await db.mark_video_ids(video_ids)
+        total = await db.get_posted_count()
+        logger.info(
+            "[SCAN] user=%s marked all liked (%d), added=%d, total=%d",
+            user.id, len(video_ids), added, total,
+        )
+        await update.message.reply_text(
+            f"✅ Отмечено {len(video_ids)} лайкнутых треков как уже опубликованных.\n"
+            f"➕ Добавлено: {added} | 📊 Всего в базе: {total}\n\n"
+            f"Бот не будет повторять эти треки.\n"
+            f"Чтобы сбросить: /clear_history"
+        )
+
+
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  /history — show recently posted tracks                         ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+
+async def cmd_history(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    _log_update(update)
+    user = update.effective_user
+    if not user or not is_allowed(user.id):
+        return
+
+    tracks = await db.get_recent_posted(limit=15)
+    total = await db.get_posted_count()
+
+    if not tracks:
+        await update.message.reply_text("📭 Пока нет опубликованных треков.")
+        return
+
+    lines = [f"📜 <b>Последние опубликованные треков</b> (всего: {total}):\n"]
+    for i, t in enumerate(tracks, 1):
+        posted_at = t.get("posted_at", "?")
+        title = t["title"]
+        artists = t["artists"]
+        vid = t["video_id"]
+        if title == "[scanned]":
+            lines.append(f"  {i}. <code>{vid}</code> (сканирован)")
+        else:
+            lines.append(f"  {i}. 🎵 {title} — {artists}")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  /clear_history — reset tracking database                       ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+
+async def cmd_clear_history(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    _log_update(update)
+    user = update.effective_user
+    if not user or not is_allowed(user.id):
+        return
+
+    count = await db.clear_posted_history()
+    logger.info("[CLEAR] user=%s cleared %d records", user.id, count)
+    await update.message.reply_text(
+        f"🗑 Очищено {count} записей из базы опубликованных треков.\n\n"
+        f"⚠ Теперь бот заново опубликует все лайкнутые треки!\n"
+        f"Используй /scan чтобы заново сканировать канал."
+    )
+
+
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  /refresh — try to auto-refresh cookies from browser            ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+
+async def cmd_refresh(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    _log_update(update)
+    user = update.effective_user
+    if not user or not is_allowed(user.id):
+        return
+
+    await update.message.reply_text("🔄 Пробую извлечь свежие куки из браузера…")
+
+    refreshed = await asyncio.to_thread(yt_service.try_auto_refresh)
+    if refreshed:
+        try:
+            tracks = await asyncio.to_thread(yt_service.get_liked_songs, 1)
+            await update.message.reply_text(
+                f"✅ Куки обновлены! Работает.\n"
+                f"Найдено {len(tracks)} лайкнутых треков."
+            )
+        except Exception as e:
+            await update.message.reply_text(
+                f"⚠ Куки сохранены, но проверка не прошла:\n<code>{e}</code>\n\n"
+                f"Возможно, ты не залогинен в браузере на music.youtube.com.",
+                parse_mode="HTML",
+            )
+    else:
+        await update.message.reply_text(
+            "❌ Не удалось извлечь куки из браузера.\n\n"
+            "Возможные причины:\n"
+            "• Ты не залогинен на music.youtube.com в браузере\n"
+            "• Нужны права администратора (для Chrome)\n\n"
+            "Решения:\n"
+            "• Вставь куки из расширения cookies.txt в чат\n"
+            "• Или напиши /export (нужен запуск от админа)"
+        )
 
 
 # ╔══════════════════════════════════════════════════════════════════╗
@@ -365,6 +682,90 @@ async def msg_handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     text = update.message.text.strip() if update.message and update.message.text else ""
+
+    # ── Auto-detect Netscape cookies pasted directly ───────────────
+    # (no /auth required — user can just paste cookies)
+    if (
+        text.strip().startswith("# Netscape")
+        or text.strip().startswith("# HttpOnly")
+    ):
+        logger.info("[TEXT] user=%s auto-detected Netscape cookies", user.id)
+        headers = yt_service.parse_netscape_cookies(text)
+        if headers:
+            ok = yt_service._save_browser_dict(headers)
+            if not ok:
+                await update.message.reply_text("❌ Ошибка сохранения cookies.")
+                return
+        else:
+            await update.message.reply_text(
+                "❌ Не удалось распознать Netscape cookies.\n"
+                "Убедись что есть __Secure-3PAPISID."
+            )
+            return
+
+        # Reload and test
+        yt_service.reload_token()
+        if yt_service.is_authorized:
+            try:
+                tracks = await asyncio.to_thread(yt_service.get_liked_songs, 1)
+                count = len(tracks)
+                await update.message.reply_text(
+                    f"✅ Cookies из сообщения приняты!\n"
+                    f"Найдено {count} лайкнутых треков.\n\n"
+                    f"Если канал уже настроен — бот готов к работе!\n"
+                    f"Иначе: /channel"
+                )
+            except Exception as e:
+                logger.exception("[TEXT] user=%s cookie auth test FAILED", user.id)
+                await update.message.reply_text(
+                    f"⚠ Cookies сохранены, но ошибка проверки:\n<code>{e}</code>\n\n"
+                    f"Возможно, cookies истекли.",
+                    parse_mode="HTML",
+                )
+        else:
+            await update.message.reply_text(
+                "❌ Cookies распознаны, но авторизация не создалась."
+            )
+        return
+
+    # ── Auto-detect JSON cookie header pasted directly ──────────────
+    if text.strip().startswith("{") and "cookie" in text.lower() and "authorization" in text.lower():
+        logger.info("[TEXT] user=%s auto-detected JSON cookies", user.id)
+        try:
+            headers = json.loads(text)
+        except json.JSONDecodeError:
+            # Not valid JSON, fall through
+            headers = None
+
+        if headers and "cookie" in headers and "authorization" in headers:
+            ok = yt_service._save_browser_dict(headers)
+            if not ok:
+                await update.message.reply_text("❌ Ошибка сохранения cookies.")
+                return
+
+            yt_service.reload_token()
+            if yt_service.is_authorized:
+                try:
+                    tracks = await asyncio.to_thread(yt_service.get_liked_songs, 1)
+                    count = len(tracks)
+                    await update.message.reply_text(
+                        f"✅ JSON cookies приняты!\n"
+                        f"Найдено {count} лайкнутых треков.\n\n"
+                        f"Если канал уже настроен — бот готов к работе!\n"
+                        f"Иначе: /channel"
+                    )
+                except Exception as e:
+                    logger.exception("[TEXT] user=%s json auth test FAILED", user.id)
+                    await update.message.reply_text(
+                        f"⚠ Cookies сохранены, но ошибка проверки:\n<code>{e}</code>\n\n"
+                        f"Возможно, cookies истекли.",
+                        parse_mode="HTML",
+                    )
+            else:
+                await update.message.reply_text(
+                    "❌ Cookies распознаны, но авторизация не создалась."
+                )
+            return
 
     # ── Auth flow: user is sending browser headers ──────────────────
     if ctx.user_data.get("awaiting_auth"):
@@ -474,9 +875,11 @@ async def msg_handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
 
         await db.save_channel(user.id, channel_id)
         await update.message.reply_text(
-            f"✅ Канал подключён: {channel_id}\n\n"
-            f"🔄 Автопроверка: каждые {CHECK_INTERVAL_MINUTES} мин.\n"
-            f"Напиши /check чтобы проверить прямо сейчас."
+            "✅ <b>Канал подключён!</b>\n\n"
+            f"📺 Канал: <code>{channel_id}</code>\n"
+            f"🔄 Автопроверка: каждые {CHECK_INTERVAL_MINUTES} мин.\n\n"
+            "Напиши /check чтобы проверить прямо сейчас.",
+            parse_mode="HTML",
         )
         return
 
@@ -486,7 +889,11 @@ async def msg_handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         logger.info("[TEXT] user=%s text_input=%r → channel_id=%s", user.id, text, channel_id)
 
         if not yt_service.is_authorized:
-            await update.message.reply_text("⚠ Сначала авторизуй YouTube Music: /auth")
+            await update.message.reply_text(
+                "⚠️ <b>Сначала авторизуй YouTube Music</b>\n"
+                "Напиши /auth",
+                parse_mode="HTML",
+            )
             return
 
         bot: Bot = ctx.bot
@@ -500,31 +907,38 @@ async def msg_handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         except Exception as e:
             logger.exception("[TEXT] user=%s channel %s verify FAILED", user.id, channel_id)
             await update.message.reply_text(
-                f"❌ Не могу отправить сообщение в канал {channel_id}.\n\n"
+                f"❌ <b>Не могу подключиться к каналу</b>\n\n"
+                f"<code>{channel_id}</code>\n\n"
                 f"Убедись, что:\n"
-                f"1. Бот добавлен как администратор канала\n"
-                f"2. У бота есть право публикации сообщений\n\n"
-                f"Ошибка: {e}"
+                f"1. Бот добавлен как администратор\n"
+                f"2. У бота есть право публикации\n\n"
+                f"Ошибка: <code>{e}</code>",
+                parse_mode="HTML",
             )
             return
 
         await db.save_channel(user.id, channel_id)
         await update.message.reply_text(
-            f"✅ Канал подключён: {channel_id}\n\n"
-            f"🔄 Автопроверка: каждые {CHECK_INTERVAL_MINUTES} мин.\n"
-            f"Напиши /check чтобы проверить прямо сейчас."
+            "✅ <b>Канал подключён!</b>\n\n"
+            f"📺 Канал: <code>{channel_id}</code>\n"
+            f"🔄 Автопроверка: каждые {CHECK_INTERVAL_MINUTES} мин.\n\n"
+            "Напиши /check чтобы проверить прямо сейчас.",
+            parse_mode="HTML",
         )
         return
 
     # ── Unknown text ────────────────────────────────────────────────
     if yt_service.is_authorized:
         await update.message.reply_text(
-            "🤔 Не понял команду.\n\n"
-            "Используй /help для списка команд."
+            "🤔 <b>Не понял команду</b>\n\n"
+            "Используй /help для списка команд.",
+            parse_mode="HTML",
         )
     else:
         await update.message.reply_text(
-            "⚠ Сначала авторизуй YouTube Music: /auth"
+            "⚠️ <b>Сначала авторизуй YouTube Music</b>\n"
+            "Напиши /auth",
+            parse_mode="HTML",
         )
 
 
@@ -654,52 +1068,46 @@ def _best_thumb_url(thumbnails: list[dict]) -> str | None:
 async def post_song_to_channel(
     bot: Bot, channel_id: str, track: dict[str, Any]
 ) -> bool:
+    """Post a track to the channel: download audio first, then send cover + audio together."""
     try:
-        caption = _format_caption(track)
-        thumb_url = _best_thumb_url(track.get("thumbnails", []))
-        video_id = track["video_id"]
-
         import aiohttp
 
-        # ── Message 1: cover art + description ─────────────────────
+        video_id = track["video_id"]
+        thumb_url = _best_thumb_url(track.get("thumbnails", []))
+
+        # ── Step 1: Download audio FIRST (this is the slow part) ──
+        audio_path = await asyncio.to_thread(yt_service.download_audio, video_id)
+
+        # ── Step 2: Send cover + audio immediately after ──────────
+        # Download thumbnail once for both messages
+        thumbnail_bytes = None
         if thumb_url:
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(thumb_url) as resp:
                         if resp.status == 200:
-                            photo_bytes = await resp.read()
-                            await bot.send_photo(
-                                chat_id=channel_id,
-                                photo=photo_bytes,
-                                caption=caption,
-                                parse_mode="HTML",
-                            )
-                            logger.info(
-                                "[POST] cover=%s(%s) → %s",
-                                track["title"], video_id, channel_id,
-                            )
+                            thumbnail_bytes = await resp.read()
             except Exception:
-                logger.warning("[POST] Failed to send cover for %s", video_id)
+                pass
+
+        # Send cover art with caption
+        if thumbnail_bytes:
+            await bot.send_photo(
+                chat_id=channel_id,
+                photo=thumbnail_bytes,
+                caption=_format_caption(track),
+                parse_mode="HTML",
+            )
         else:
             await bot.send_message(
-                chat_id=channel_id, text=caption, parse_mode="HTML"
+                chat_id=channel_id,
+                text=_format_caption(track),
+                parse_mode="HTML",
             )
+        logger.info("[POST] cover=%s(%s) → %s", track["title"], video_id, channel_id)
 
-        # ── Message 2: audio file ──────────────────────────────────
-        audio_path = await asyncio.to_thread(yt_service.download_audio, video_id)
-
+        # Send audio file right after cover (no long delay)
         if audio_path:
-            # Download thumbnail for audio cover art
-            thumbnail_bytes = None
-            if thumb_url:
-                try:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(thumb_url) as resp:
-                            if resp.status == 200:
-                                thumbnail_bytes = await resp.read()
-                except Exception:
-                    pass
-
             with open(audio_path, "rb") as audio_file:
                 send_kwargs = {
                     "chat_id": channel_id,
@@ -710,21 +1118,14 @@ async def post_song_to_channel(
                 if thumbnail_bytes:
                     send_kwargs["thumbnail"] = thumbnail_bytes
                 await bot.send_audio(**send_kwargs)
-
-            logger.info(
-                "[POST] audio=%s(%s) → %s",
-                track["title"], video_id, channel_id,
-            )
+            logger.info("[POST] audio=%s(%s) → %s", track["title"], video_id, channel_id)
             return True
 
         logger.warning("[POST] Audio download failed for %s", video_id)
-        return True  # cover message was sent successfully
-        return True
+        return True  # cover was sent
 
     except Exception:
-        logger.exception(
-            "[POST] FAILED song=%s → %s", track["video_id"], channel_id
-        )
+        logger.exception("[POST] FAILED song=%s → %s", track["video_id"], channel_id)
         return False
 
 
@@ -782,6 +1183,29 @@ async def scheduled_check(app: Application) -> None:
     logger.info("[SCHEDULED] Active users: %d", len(users))
     bot = app.bot
 
+    # ── Ensure Edge is running (once per cycle) ─────────────────
+    if not yt_service.is_authorized:
+        logger.info("[SCHEDULED] Edge not running, trying to launch…")
+        refreshed = await asyncio.to_thread(yt_service.try_auto_refresh)
+        if not refreshed:
+            logger.error("[SCHEDULED] Edge launch FAILED — notifying users")
+            for user in users:
+                try:
+                    await bot.send_message(
+                        chat_id=user["user_id"],
+                        text=(
+                            "⚠️ <b>Браузер не запущен!</b>\n\n"
+                            "Автопроверка не работает.\n\n"
+                            "Запусти YTMusicBot.exe заново."
+                        ),
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    logger.exception("[SCHEDULED] Failed to notify user=%s", user["user_id"])
+            return
+        else:
+            logger.info("[SCHEDULED] Edge launched successfully")
+
     for user in users:
         uid = user["user_id"]
         ch = user["channel_id"]
@@ -804,8 +1228,13 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("auth", cmd_auth))
+    app.add_handler(CommandHandler("oauth", cmd_oauth))
     app.add_handler(CommandHandler("export", cmd_export))
     app.add_handler(CommandHandler("check", cmd_check))
+    app.add_handler(CommandHandler("scan", cmd_scan))
+    app.add_handler(CommandHandler("history", cmd_history))
+    app.add_handler(CommandHandler("clear_history", cmd_clear_history))
+    app.add_handler(CommandHandler("refresh", cmd_refresh))
     app.add_handler(CommandHandler("channel", cmd_channel))
     app.add_handler(CommandHandler("pause", cmd_pause))
     app.add_handler(CommandHandler("resume", cmd_resume))

@@ -5,3 +5,6 @@ python-dotenv
 apscheduler>=3.10,<4
 browser_cookie3
 yt-dlp
+cryptography
+pystray
+Pillow

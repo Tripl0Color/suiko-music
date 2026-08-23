@@ -93,3 +93,47 @@ async def get_all_active_users() -> list[dict]:
             "SELECT user_id, channel_id FROM user_settings WHERE is_active = 1 AND channel_id IS NOT NULL"
         )
         return [dict(row) for row in await cursor.fetchall()]
+
+
+async def get_recent_posted(limit: int = 20) -> list[dict]:
+    """Return the most recently posted tracks."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT video_id, title, artists, album, posted_at "
+            "FROM posted_songs ORDER BY posted_at DESC LIMIT ?",
+            (limit,),
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+
+
+async def clear_posted_history() -> int:
+    """Delete all posted songs. Returns number of deleted rows."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("DELETE FROM posted_songs")
+        await db.commit()
+        return cursor.rowcount
+
+
+async def mark_video_ids(video_ids: list[str]) -> int:
+    """Mark a list of video IDs as posted (INSERT OR IGNORE). Returns number inserted."""
+    if not video_ids:
+        return 0
+    async with aiosqlite.connect(DB_PATH) as db:
+        count = 0
+        for vid in video_ids:
+            cursor = await db.execute(
+                "INSERT OR IGNORE INTO posted_songs (video_id, title, artists) VALUES (?, ?, ?)",
+                (vid, "[scanned]", "[scanned]"),
+            )
+            count += cursor.rowcount
+        await db.commit()
+        return count
+
+
+async def get_posted_count() -> int:
+    """Return total number of posted tracks."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT COUNT(*) FROM posted_songs")
+        row = await cursor.fetchone()
+        return row[0] if row else 0

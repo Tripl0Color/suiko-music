@@ -1,107 +1,168 @@
 # 🎵 YT Music → Telegram Channel Bot
 
-Бот автоматически пересылает лайкнутые песни из YouTube Music в твой Telegram-канал с обложками.
+Автоматически пересылает лайкнутые треки из YouTube Music в Telegram-канал с обложками и аудио.
 
-## ⚠ Важно
+![Python](https://img.shields.io/badge/Python-3.10+-blue) ![License](https://img.shields.io/badge/License-MIT-green) ![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey)
 
-**OAuth авторизация в YouTube Music сломана на стороне сервера с сентября 2025** ([issue #813](https://github.com/sigma67/ytmusicapi/issues/813)).
-Этот бот использует **browser-based auth** — куки из браузера.
+---
+
+## 📸 Как это работает
+
+```
+YouTube Music (лайки) → Бот (скрейпит через Edge/Chrome) → Telegram канал
+```
+
+1. Бот запускает браузер с debug-портом
+2. Навигирует на страницу лайкнутых треков
+3. Извлекает информацию о треках из DOM
+4. Скачивает аудио через CDP (без yt-dlp)
+5. Отправляет обложку + аудио в канал
+
+---
+
+## 🚀 Быстрый старт
+
+### Способ 1: Python (рекомендуется для разработки)
+
+```bash
+# 1. Клонируй/скачай проект
+git clone https://github.com/YOUR_USERNAME/yt-music-bot.git
+cd yt-music-bot
+
+# 2. Запусти первый настройщик
+first_setup.bat
+
+# 3. Отредактируй config.json
+#    Вставь токен от @BotFather
+
+# 4. Запусти бота
+python main.py
+```
+
+### Способ 2: EXE (для обычных пользователей)
+
+```bash
+# 1. Собери exe
+build.bat
+
+# 2. Отредактируй config.json в папке dist\YTMusicBot
+# 3. Запусти YTMusicBot.exe
+```
+
+---
+
+## ⚙️ Настройка (config.json)
+
+```json
+{
+    "telegram_bot_token": "123456:ABC-DEF...",
+    "allowed_user_ids": [123456789],
+    "browser": "edge",
+    "check_interval_minutes": 15,
+    "db_path": "songs.db",
+    "browser_file": "browser.json"
+}
+```
+
+| Поле | Описание | По умолчанию |
+|------|----------|--------------|
+| `telegram_bot_token` | Токен от @BotFather | **обязательно** |
+| `allowed_user_ids` | ID пользователей (пусто = все) | `[]` |
+| `browser` | Браузер: `edge` или `chrome` | `"edge"` |
+| `check_interval_minutes` | Интервал проверки лайков | `15` |
+| `db_path` | Путь к SQLite базе | `"songs.db"` |
+| `browser_file` | Путь к файлу кук | `"browser.json"` |
+
+### Получение Telegram ID
+
+1. Напиши боту [@userinfobot](https://t.me/userinfobot)
+2. Скопируй свой ID
+3. Вставь в `allowed_user_ids`
+
+### Получение токена бота
+
+1. Открой [@BotFather](https://t.me/BotFather) в Telegram
+2. Напиши `/newbot`
+3. Следуй инструкциям
+4. Скопируй токен
+
+---
 
 ## 📂 Структура проекта
 
 ```
-├── main.py              # Точка входа
-├── bot.py               # Все обработчики Telegram-бота
-├── yt_music.py          # YouTube Music API (browser auth + лайки)
-├── database.py          # SQLite (треки, настройки)
-├── config.py            # Конфигурация из .env
-├── requirements.txt
-├── Dockerfile
-├── docker-compose.yml
-├── .env.example
+yt-music-bot/
+├── main.py              # Точка входа (tray icon + scheduler)
+├── bot.py               # Обработчики команд Telegram
+├── yt_music.py          # YouTube Music (CDP + скрейпинг)
+├── database.py          # SQLite база
+├── config.py            # Загрузка конфигурации
+├── config.json          # Настройки (редактируй этот файл!)
+├── browser.json         # Куки браузера (создаётся автоматически)
+├── songs.db             # База опубликованных треков
+├── requirements.txt     # Зависимости Python
+├── build.bat            # Сборка EXE
+├── first_setup.bat      # Первый запуск
+├── install_autostart.bat# Автозапуск с Windows
+├── start_bot.vbs        # Тихий запуск (без консоли)
 └── README.md
 ```
 
-## 🚀 Установка
+---
 
-```bash
-# Клонируй/скопируй проект
-cd yt-music-telegram-bot
+## 🎯 Команды бота
 
-# Создай виртуальное окружение
-python -m venv venv
-venv\Scripts\activate  # Windows
-# source venv/bin/activate  # Linux/Mac
+| Команда | Описание |
+|---------|----------|
+| `/start` | Запуск и настройка |
+| `/status` | Статус бота |
+| `/check` | Проверить лайкнутые сейчас |
+| `/pause` | Приостановить автопроверку |
+| `/resume` | Возобновить автопроверку |
+| `/channel` | Указать канал |
+| `/scan` | Отметить треки как опубликованные |
+| `/history` | Последние опубликованные треки |
+| `/clear_history` | Очистить историю |
+| `/export` | Извлечь cookies из браузера |
+| `/refresh` | Обновить cookies |
+| `/auth` | Инструкция по авторизации |
+| `/help` | Справка |
 
-# Установи зависимости
-pip install -r requirements.txt
-
-# Создай .env
-cp .env.example .env
-# Отредактируй .env — вставь токен бота и ID пользователя
-```
+---
 
 ## 🔐 Авторизация YouTube Music
 
-Бот использует куки из браузера (browser-based auth).
+Бот использует **Chrome DevTools Protocol (CDP)** — куки извлекаются напрямую из браузера.
 
-### Способ 1: Автоматический экспорт (`/export`)
+### Автоматически (рекомендуется)
 
-Напиши боту `/export` — он попробует извлечь cookies из Chrome или Edge.
+1. Запусти бота
+2. Откроется окно Edge/Chrome
+3. **Залогинься** в YouTube Music в этом окне
+4. Бот автоматически извлечёт куки
 
-⚠ **На Windows** бот должен быть запущен от администратора (иначе Chrome блокирует чтение cookies).
+### Ручная вставка кук
 
-### Способ 2: DevTools (ручной)
+1. Открой [music.youtube.com](https://music.youtube.com)
+2. F12 → Application → Cookies → скопируй нужные
+3. Или используй расширение [Get cookies.txt](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc)
+4. Вставь как сообщение боту
 
-1. Открой [music.youtube.com](https://music.youtube.com) в Chrome/Firefox
-2. Войди в Google-аккаунт
-3. Нажми **F12** → вкладка **Network**
-4. Найди любой запрос к `music.youtube.com`
-5. Нажми правой → **Copy → Copy as cURL (bash)**
-6. Отправь скопированный текст боту (`/auth` → вставить)
+> ⏰ Cookies истекают через ~2-4 недели. Бот автоматически обновляет их через CDP.
 
-### Способ 3: JSON заголовки
+---
 
-1. В DevTools → **Network** → выбери запрос
-2. Вкладка **Headers** → скопируй `cookie`, `authorization`, `x-goog-authuser`
-3. Собери JSON:
-```json
-{
-  "cookie": "SOCS=...; __Secure-3PAPISID=...",
-  "authorization": "SAPISIDHASH ...",
-  "x-goog-authuser": "0"
-}
-```
-4. Отправь боту
-
-### Способ 4: ytmusicapi CLI
+## 🔄 Автозапуск с Windows
 
 ```bash
-ytmusicapi browser
-```
-Следуй инструкциям, получи `browser.json`. Отправь файл боту.
+# Установи автозапуск
+install_autostart.bat
 
-**⏰ Cookies истекают через ~2-4 недели.** Когда бот перестанет работать — повтори /auth.
-
-## 🎯 Использование
-
-```
-/start   → Начать настройку
-/auth    → Инструкция по авторизации
-/export  → Автоизвлечение cookies из Chrome/Edge
-/check   → Проверить и опубликовать лайкнутые
-/channel → Указать канал (@username или ID или пересылка)
-/pause   → Приостановить автопроверку
-/resume  → Возобновить автопроверку
-/status  → Статус бота
-/help    → Справка
+# Удали автозапуск
+# Удали файл: %APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\YT Music Bot.lnk
 ```
 
-### Флоу:
-1. `/start` → `/auth` → отправить headers/JSON/файл
-2. `/channel` → указать канал
-3. `/check` → бот опубликует лайкнутые песни с обложками
-4. Автопроверка каждые 15 минут
+---
 
 ## 🐳 Docker
 
@@ -109,12 +170,38 @@ ytmusicapi browser
 docker compose up -d
 ```
 
-## ⚙ Настройка (.env)
+---
 
-| Переменная | Описание | По умолчанию |
-|---|---|---|
-| `TELEGRAM_BOT_TOKEN` | Токен бота от @BotFather | — |
-| `ALLOWED_USER_IDS` | ID пользователей через запятую | все |
-| `YTMUSIC_BROWSER_FILE` | Путь к файлу с headers | `browser.json` |
-| `CHECK_INTERVAL_MINUTES` | Интервал проверки | `15` |
-| `DB_PATH` | Путь к SQLite базе | `songs.db` |
+## 🛠️ Требования
+
+- **Python** 3.10+
+- **Windows** (для CDP и tray icon)
+- **Edge** или **Chrome** (для извлечения кук)
+- **ffmpeg** (для конвертации аудио — устанавливается автоматически через imageio_ffmpeg)
+
+---
+
+## 📋 FAQ
+
+### Бот не находит треки?
+
+1. Убедись что Edge/Chrome открылся с YouTube Music
+2. Проверь что залогинен нужным аккаунтом
+3. Напиши `/check` в бот
+
+### Аудио не постится?
+
+- YouTube требует авторизацию для скачивания
+- Убедись что браузер залогинен
+- Попробуй `/refresh`
+
+### Cookies истекли?
+
+- Напиши `/export` или `/refresh`
+- Или вставь свежие куки в чат
+
+---
+
+## 📄 Лицензия
+
+MIT License
